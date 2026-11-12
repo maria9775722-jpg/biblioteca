@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema Bibliotecário</title>
-    <!-- Biblioteca para gerar códigos de barras reais -->
-    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <!-- Carregamento assíncrono para não travar o login se estiver sem internet -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js" defer></script>
     <style>
         :root {
             --primary: #1e3a8a;
@@ -16,6 +16,7 @@
             --border: #cbd5e1;
             --success: #16a34a;
             --danger: #dc2626;
+            --warning: #d97706;
         }
 
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -31,6 +32,10 @@
             box-shadow: 0 10px 25px rgba(0,0,0,0.2); width: 100%; max-width: 380px;
         }
         .login-box h2 { margin-top: 0; color: var(--primary); text-align: center; }
+        #login-erro {
+            display: none; background: #fee2e2; color: #991b1b; padding: 0.6rem;
+            border-radius: 4px; font-size: 0.85rem; margin-bottom: 1rem; text-align: center; font-weight: bold;
+        }
 
         /* Layout Principal */
         #app-screen { display: none; min-height: 100vh; }
@@ -56,7 +61,7 @@
             background: var(--surface); padding: 1.5rem; border-radius: 8px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.05); margin-bottom: 1.5rem;
         }
-        .grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        .grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
         .stat-box {
             background: var(--surface); padding: 1.5rem; border-radius: 8px;
             border-left: 5px solid var(--primary-light); box-shadow: 0 2px 6px rgba(0,0,0,0.05);
@@ -79,17 +84,21 @@
         .btn:hover { background: var(--primary); }
         .btn-success { background: var(--success); }
         .btn-danger { background: var(--danger); }
-        .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.85rem; }
+        .btn-warning { background: var(--warning); }
+        .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.8rem; }
 
-        /* Tabelas */
+        /* Tabelas e Badges */
         table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
         th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
         th { background: #f8fafc; color: #475569; }
         .badge {
-            padding: 0.25rem 0.6rem; border-radius: 99px; font-size: 0.8rem; font-weight: bold;
+            padding: 0.25rem 0.6rem; border-radius: 99px; font-size: 0.8rem; font-weight: bold; display: inline-block;
         }
         .badge-ok { background: #dcfce7; color: #166534; }
-        .badge-emp { background: #fee2e2; color: #991b1b; }
+        .badge-emp { background: #dbeafe; color: #1e40af; }
+        .badge-atraso { background: #fee2e2; color: #991b1b; }
+        .badge-hoje { background: #fef3c7; color: #92400e; }
+        tr.linha-atrasada { background-color: #fef2f2; }
 
         /* Modal da Carteirinha */
         #modal-carteirinha {
@@ -109,7 +118,6 @@
         .carteirinha-info { font-size: 0.85rem; line-height: 1.4; }
         .carteirinha-barcode { text-align: center; background: white; padding: 4px; border-radius: 4px; }
 
-        /* Regras de Impressão (Imprime apenas a carteirinha) */
         @media print {
             body * { visibility: hidden; }
             #area-impressao, #area-impressao * { visibility: visible; }
@@ -124,7 +132,8 @@
         <div class="login-box">
             <h2>📚 BiblioSys</h2>
             <p style="text-align:center; color:#64748b; font-size:0.9rem;">Acesso Restrito - Bibliotecários</p>
-            <form onsubmit="fazerLogin(event)">
+            <div id="login-erro"></div>
+            <form id="form-login">
                 <div class="form-group">
                     <label>Usuário</label>
                     <input type="text" id="login-user" value="admin" required>
@@ -133,7 +142,7 @@
                     <label>Senha</label>
                     <input type="password" id="login-pass" value="1234" required>
                 </div>
-                <button type="submit" class="btn" style="width:100%;">Entrar no Sistema</button>
+                <button type="button" id="btn-entrar" class="btn" style="width:100%;" onclick="fazerLogin()">Entrar no Sistema</button>
             </form>
             <p style="font-size:0.8rem; color:#64748b; margin-top:1rem; text-align:center;">
                 Teste: <b>admin</b> / <b>1234</b> (Administrador)<br>
@@ -173,9 +182,13 @@
                         <h3 id="stat-disponiveis">0</h3>
                         <p>Disponíveis</p>
                     </div>
-                    <div class="stat-box" style="border-color: var(--danger);">
+                    <div class="stat-box" style="border-color: var(--primary-light);">
                         <h3 id="stat-emprestados">0</h3>
                         <p>Emprestados</p>
+                    </div>
+                    <div class="stat-box" style="border-color: var(--danger);">
+                        <h3 id="stat-atrasados" style="color: var(--danger);">0</h3>
+                        <p>Em Atraso</p>
                     </div>
                     <div class="stat-box" style="border-color: #f59e0b;">
                         <h3 id="stat-usuarios">0</h3>
@@ -184,15 +197,17 @@
                 </div>
 
                 <div class="card" style="margin-top: 1.5rem;">
-                    <h3>Empréstimos Ativos no Momento</h3>
+                    <h3>Empréstimos Ativos e Verificação de Prazos</h3>
                     <table>
                         <thead>
                             <tr>
                                 <th>Cód. Livro</th>
                                 <th>Título</th>
-                                <th>Leitor (Matrícula)</th>
-                                <th>Data Empréstimo</th>
+                                <th>Leitor</th>
+                                <th>Empréstimo</th>
                                 <th>Devolução Prevista</th>
+                                <th>Situação do Prazo</th>
+                                <th>Teste</th>
                             </tr>
                         </thead>
                         <tbody id="tabela-emprestimos-ativos"></tbody>
@@ -203,7 +218,6 @@
             <!-- 2. EMPRÉSTIMO E DEVOLUÇÃO -->
             <section id="circulacao" class="tab-content">
                 <div class="form-grid">
-                    <!-- Realizar Empréstimo -->
                     <div class="card">
                         <h3>📤 Novo Empréstimo</h3>
                         <p style="font-size:0.85rem; color:#64748b;">Use o leitor de código de barras ou digite os códigos.</p>
@@ -224,10 +238,9 @@
                         </form>
                     </div>
 
-                    <!-- Realizar Devolução -->
                     <div class="card">
                         <h3>📥 Devolução Rápida</h3>
-                        <p style="font-size:0.85rem; color:#64748b;">Bipe apenas o código de barras do livro devolvido.</p>
+                        <p style="font-size:0.85rem; color:#64748b;">Bipe o código de barras do livro. O sistema verifica atrasos automaticamente.</p>
                         <form onsubmit="realizarDevolucao(event)">
                             <div class="form-group">
                                 <label>Código de Barras do Livro</label>
@@ -316,6 +329,7 @@
                                 <th>Nome</th>
                                 <th>Documento</th>
                                 <th>Telefone</th>
+                                <th>Situação</th>
                                 <th>Ação</th>
                             </tr>
                         </thead>
@@ -378,6 +392,7 @@
                     </div>
                     <div class="carteirinha-barcode">
                         <svg id="barcode"></svg>
+                        <div id="barcode-fallback" style="font-family: monospace; font-weight: bold;"></div>
                     </div>
                 </div>
             </div>
@@ -389,7 +404,7 @@
     </div>
 
     <script>
-        // BANCO DE DADOS EM MEMÓRIA (Simulação inicial)
+        // DADOS INICIAIS
         let equipe = [
             { nome: 'Carlos Silva', login: 'admin', senha: '1234', role: 'Administrador' },
             { nome: 'Ana Souza', login: 'biblio', senha: '1234', role: 'Bibliotecário' }
@@ -397,7 +412,8 @@
 
         let livros = [
             { codigo: '9788535914849', titulo: '1984', autor: 'George Orwell', local: 'Estante A1', status: 'Disponível' },
-            { codigo: '9788595081512', titulo: 'O Pequeno Príncipe', autor: 'Antoine de Saint-Exupéry', local: 'Estante B2', status: 'Disponível' }
+            { codigo: '9788595081512', titulo: 'O Pequeno Príncipe', autor: 'Antoine de Saint-Exupéry', local: 'Estante B2', status: 'Disponível' },
+            { codigo: '9788535909555', titulo: 'Dom Casmurro', autor: 'Machado de Assis', local: 'Estante C1', status: 'Disponível' }
         ];
 
         let usuarios = [
@@ -407,21 +423,36 @@
         let emprestimos = [];
         let usuarioLogado = null;
 
-        // LOGIN E LOGOUT
-        function fazerLogin(e) {
-            e.preventDefault();
-            const u = document.getElementById('login-user').value;
-            const p = document.getElementById('login-pass').value;
-            const encontrado = equipe.find(x => x.login === u && x.senha === p);
+        // Permite entrar apertando ENTER no campo de senha
+        document.getElementById('login-pass').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                fazerLogin();
+            }
+        });
 
-            if (!encontrado) return alert('Usuário ou senha inválidos!');
+        // LOGIN E LOGOUT
+        function fazerLogin() {
+            const erroBox = document.getElementById('login-erro');
+            erroBox.style.display = 'none';
+
+            // .trim() remove espaços acidentais e .toLowerCase() aceita Admin ou admin
+            const u = document.getElementById('login-user').value.trim().toLowerCase();
+            const p = document.getElementById('login-pass').value.trim();
+
+            const encontrado = equipe.find(x => x.login.toLowerCase() === u && x.senha === p);
+
+            if (!encontrado) {
+                erroBox.innerText = 'Usuário ou senha incorretos! Use admin / 1234';
+                erroBox.style.display = 'block';
+                return;
+            }
 
             usuarioLogado = encontrado;
             document.getElementById('login-screen').style.display = 'none';
             document.getElementById('app-screen').style.display = 'block';
             document.getElementById('user-badge').innerText = `${encontrado.nome} (${encontrado.role})`;
 
-            // Oculta aba de equipe se não for Administrador
             document.getElementById('btn-menu-equipe').style.display =
                 encontrado.role === 'Administrador' ? 'inline-block' : 'none';
 
@@ -434,24 +465,55 @@
             document.getElementById('login-screen').style.display = 'flex';
         }
 
-        // NAVEGAÇÃO ENTRE ABAS
+        // VERIFICAÇÃO DE DATA DE DEVOLUÇÃO
+        function verificarStatusPrazo(dataPrevistaISO) {
+            const hoje = new Date();
+            hoje.setHours(0, 0, 0, 0);
+
+            const [ano, mes, dia] = dataPrevistaISO.split('-').map(Number);
+            const prevista = new Date(ano, mes - 1, dia);
+            prevista.setHours(0, 0, 0, 0);
+
+            const diffMs = prevista - hoje;
+            const diffDias = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+            if (diffDias < 0) {
+                return { atrasado: true, diasAtraso: Math.abs(diffDias), texto: `ATRASADO (${Math.abs(diffDias)} dia(s))`, classe: 'badge-atraso' };
+            } else if (diffDias === 0) {
+                return { atrasado: false, diasAtraso: 0, texto: 'Vence Hoje', classe: 'badge-hoje' };
+            } else {
+                return { atrasado: false, diasAtraso: 0, texto: `No Prazo (faltam ${diffDias}d)`, classe: 'badge-ok' };
+            }
+        }
+
+        function formatarDataBR(dataISO) {
+            const [ano, mes, dia] = dataISO.split('-');
+            return `${dia}/${mes}/${ano}`;
+        }
+
+        function obterDataISO(diasAdicionar = 0) {
+            const d = new Date();
+            d.setDate(d.getDate() + diasAdicionar);
+            const ano = d.getFullYear();
+            const mes = String(d.getMonth() + 1).padStart(2, '0');
+            const dia = String(d.getDate()).padStart(2, '0');
+            return `${ano}-${mes}-${dia}`;
+        }
+
         function abrirAba(id, btn) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
             document.getElementById(id).classList.add('active');
             btn.classList.add('active');
 
-            // Foco automático no leitor de código de barras ao abrir as abas
             if (id === 'circulacao') document.getElementById('emp-matricula').focus();
             if (id === 'livros') document.getElementById('livro-codigo').focus();
         }
 
-        // CADASTRO DE LIVROS
         function cadastrarLivro(e) {
             e.preventDefault();
             let codigo = document.getElementById('livro-codigo').value.trim();
             if (!codigo) {
-                // Gera código interno caso não tenha leitor ou ISBN
                 codigo = 'LIB' + Math.floor(100000 + Math.random() * 900000);
             }
             if (livros.some(l => l.codigo === codigo)) {
@@ -472,7 +534,6 @@
             alert(`Livro cadastrado com código: ${codigo}`);
         }
 
-        // CADASTRO DE USUÁRIOS
         function cadastrarUsuario(e) {
             e.preventDefault();
             const matricula = 'USR' + (1001 + usuarios.length);
@@ -487,7 +548,6 @@
             alert(`Leitor cadastrado! Matrícula gerada: ${matricula}`);
         }
 
-        // CARTEIRINHA COM CÓDIGO DE BARRAS
         function abrirCarteirinha(matricula) {
             const usr = usuarios.find(u => u.matricula === matricula);
             if (!usr) return;
@@ -496,12 +556,21 @@
             document.getElementById('card-doc').innerText = usr.doc;
             document.getElementById('card-mat').innerText = usr.matricula;
 
-            JsBarcode("#barcode", usr.matricula, {
-                format: "CODE128",
-                width: 2,
-                height: 40,
-                displayValue: true
-            });
+            if (typeof JsBarcode !== 'undefined') {
+                document.getElementById('barcode').style.display = 'inline';
+                document.getElementById('barcode-fallback').style.display = 'none';
+                JsBarcode("#barcode", usr.matricula, {
+                    format: "CODE128",
+                    width: 2,
+                    height: 40,
+                    displayValue: true
+                });
+            } else {
+                // Caso esteja 100% offline sem carregar a biblioteca externa
+                document.getElementById('barcode').style.display = 'none';
+                document.getElementById('barcode-fallback').style.display = 'block';
+                document.getElementById('barcode-fallback').innerText = `* ${usr.matricula} *`;
+            }
 
             document.getElementById('modal-carteirinha').style.display = 'flex';
         }
@@ -510,7 +579,6 @@
             document.getElementById('modal-carteirinha').style.display = 'none';
         }
 
-        // EMPRÉSTIMO E DEVOLUÇÃO
         function realizarEmprestimo(e) {
             e.preventDefault();
             const mat = document.getElementById('emp-matricula').value.trim().toUpperCase();
@@ -520,36 +588,42 @@
             const usr = usuarios.find(u => u.matricula === mat);
             if (!usr) return alert('Usuário não encontrado!');
 
+            const temAtraso = emprestimos.some(emp => emp.matricula === mat && verificarStatusPrazo(emp.dataDevISO).atrasado);
+            if (temAtraso) {
+                return alert(`BLOQUEADO: O leitor ${usr.nome} possui livro(s) com devolução em atraso!`);
+            }
+
             const livro = livros.find(l => l.codigo === cod);
             if (!livro) return alert('Livro não encontrado!');
             if (livro.status !== 'Disponível') return alert('Este livro já está emprestado!');
-
-            const hoje = new Date();
-            const devolucao = new Date();
-            devolucao.setDate(hoje.getDate() + dias);
 
             livro.status = 'Emprestado';
             emprestimos.push({
                 codLivro: livro.codigo,
                 titulo: livro.titulo,
+                matricula: usr.matricula,
                 leitor: `${usr.nome} (${usr.matricula})`,
-                dataEmp: hoje.toLocaleDateString('pt-BR'),
-                dataDev: devolucao.toLocaleDateString('pt-BR')
+                dataEmpISO: obterDataISO(0),
+                dataDevISO: obterDataISO(dias)
             });
 
             e.target.reset();
+            document.getElementById('emp-dias').value = 7;
             atualizarTudo();
-            alert('Empréstimo registrado com sucesso!');
+            alert(`Empréstimo registrado! Devolução prevista para: ${formatarDataBR(obterDataISO(dias))}`);
         }
 
         function realizarDevolucao(e) {
             e.preventDefault();
             const cod = document.getElementById('dev-cod-livro').value.trim();
             const livro = livros.find(l => l.codigo === cod);
+            const empAtivo = emprestimos.find(emp => emp.codLivro === cod);
 
-            if (!livro || livro.status === 'Disponível') {
+            if (!livro || !empAtivo) {
                 return alert('Este código não consta como emprestado.');
             }
+
+            const statusPrazo = verificarStatusPrazo(empAtivo.dataDevISO);
 
             livro.status = 'Disponível';
             emprestimos = emprestimos.filter(emp => emp.codLivro !== cod);
@@ -557,42 +631,60 @@
             e.target.reset();
             document.getElementById('dev-cod-livro').focus();
             atualizarTudo();
-            alert(`Livro "${livro.titulo}" devolvido ao acervo!`);
+
+            if (statusPrazo.atrasado) {
+                alert(`⚠️ ATENÇÃO: Livro "${livro.titulo}" devolvido com ${statusPrazo.diasAtraso} dia(s) de ATRASO!`);
+            } else {
+                alert(`✅ Livro "${livro.titulo}" devolvido dentro do prazo!`);
+            }
         }
 
-        // EQUIPE (ADMIN)
+        function simularAtraso(codLivro) {
+            const emp = emprestimos.find(e => e.codLivro === codLivro);
+            if (emp) {
+                emp.dataDevISO = obterDataISO(-5);
+                atualizarTudo();
+            }
+        }
+
         function cadastrarBibliotecario(e) {
             e.preventDefault();
             equipe.push({
                 nome: document.getElementById('bib-nome').value,
-                login: document.getElementById('bib-login').value,
-                senha: document.getElementById('bib-senha').value,
+                login: document.getElementById('bib-login').value.trim(),
+                senha: document.getElementById('bib-senha').value.trim(),
                 role: document.getElementById('bib-role').value
             });
             e.target.reset();
             atualizarTudo();
         }
 
-        // ATUALIZAÇÃO DAS TABELAS E INDICADORES
         function atualizarTudo() {
-            // Estatísticas
+            const totalAtrasados = emprestimos.filter(e => verificarStatusPrazo(e.dataDevISO).atrasado).length;
+
             document.getElementById('stat-livros').innerText = livros.length;
             document.getElementById('stat-disponiveis').innerText = livros.filter(l => l.status === 'Disponível').length;
             document.getElementById('stat-emprestados').innerText = livros.filter(l => l.status === 'Emprestado').length;
+            document.getElementById('stat-atrasados').innerText = totalAtrasados;
             document.getElementById('stat-usuarios').innerText = usuarios.length;
 
-            // Tabela Empréstimos
-            document.getElementById('tabela-emprestimos-ativos').innerHTML = emprestimos.map(e => `
-                <tr>
-                    <td><b>${e.codLivro}</b></td>
-                    <td>${e.titulo}</td>
-                    <td>${e.leitor}</td>
-                    <td>${e.dataEmp}</td>
-                    <td>${e.dataDev}</td>
-                </tr>
-            `).join('') || '<tr><td colspan="5" style="text-align:center;">Nenhum empréstimo ativo.</td></tr>';
+            document.getElementById('tabela-emprestimos-ativos').innerHTML = emprestimos.map(e => {
+                const status = verificarStatusPrazo(e.dataDevISO);
+                return `
+                    <tr class="${status.atrasado ? 'linha-atrasada' : ''}">
+                        <td><b>${e.codLivro}</b></td>
+                        <td>${e.titulo}</td>
+                        <td>${e.leitor}</td>
+                        <td>${formatarDataBR(e.dataEmpISO)}</td>
+                        <td><b>${formatarDataBR(e.dataDevISO)}</b></td>
+                        <td><span class="badge ${status.classe}">${status.texto}</span></td>
+                        <td>
+                            ${!status.atrasado ? `<button class="btn btn-warning btn-sm" onclick="simularAtraso('${e.codLivro}')">Simular Atraso</button>` : '-'}
+                        </td>
+                    </tr>
+                `;
+            }).join('') || '<tr><td colspan="7" style="text-align:center;">Nenhum empréstimo ativo.</td></tr>';
 
-            // Tabela Livros
             document.getElementById('tabela-livros').innerHTML = livros.map(l => `
                 <tr>
                     <td>${l.codigo}</td>
@@ -603,18 +695,20 @@
                 </tr>
             `).join('');
 
-            // Tabela Usuários
-            document.getElementById('tabela-usuarios').innerHTML = usuarios.map(u => `
-                <tr>
-                    <td><b>${u.matricula}</b></td>
-                    <td>${u.nome}</td>
-                    <td>${u.doc}</td>
-                    <td>${u.tel}</td>
-                    <td><button class="btn btn-sm" onclick="abrirCarteirinha('${u.matricula}')">🪪 Carteirinha</button></td>
-                </tr>
-            `).join('');
+            document.getElementById('tabela-usuarios').innerHTML = usuarios.map(u => {
+                const usrAtrasado = emprestimos.some(emp => emp.matricula === u.matricula && verificarStatusPrazo(emp.dataDevISO).atrasado);
+                return `
+                    <tr>
+                        <td><b>${u.matricula}</b></td>
+                        <td>${u.nome}</td>
+                        <td>${u.doc}</td>
+                        <td>${u.tel}</td>
+                        <td><span class="badge ${usrAtrasado ? 'badge-atraso' : 'badge-ok'}">${usrAtrasado ? 'Com Atraso' : 'Regular'}</span></td>
+                        <td><button class="btn btn-sm" onclick="abrirCarteirinha('${u.matricula}')">🪪 Carteirinha</button></td>
+                    </tr>
+                `;
+            }).join('');
 
-            // Tabela Equipe
             document.getElementById('tabela-equipe').innerHTML = equipe.map(eq => `
                 <tr><td>${eq.nome}</td><td>${eq.login}</td><td>${eq.role}</td></tr>
             `).join('');
